@@ -11,7 +11,7 @@
 #include <cool-parse.h>
 #include <stringtab.h>
 #include <utilities.h>
-
+#include <stdio.h>
 /* The compiler assumes these identifiers. */
 #define yylval cool_yylval
 #define yylex  cool_yylex
@@ -61,6 +61,7 @@ bool IsLong();
  */
 
 %x COMMENT
+%x COMMENT1
 %x STRING
 %x BROKENSTRING
 
@@ -115,12 +116,17 @@ whitespace 		([ \t\r\v\f]+)
 // no action;
 }
 
-"--".*	{
-	curr_lineno++;
+"--"	{
+	BEGIN(COMMENT1);
 }
 
-"--".*\n	{
+<COMMENT1>.		{
+	// no action	
+}
+
+<COMMENT1>\n	{
 	curr_lineno++;
+	BEGIN(INITIAL);
 }
 
 
@@ -233,6 +239,7 @@ f(?i:alse)						{
 
 <STRING>(\0|\\\0)	{
 	cool_yylval.error_msg="String contains null character";	
+//	printf("the 0 is %s\n",yytext);
 	BEGIN(BROKENSTRING);
 	return(ERROR);
 }
@@ -310,7 +317,7 @@ f(?i:alse)						{
 		BEGIN(BROKENSTRING);
 		return(ERROR);
 	}else{
-		addStr(&strdup(yytext)[1]);
+		addStr(&yytext[1]);
 	}
 }
 
