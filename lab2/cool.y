@@ -133,11 +133,34 @@
     %type <program> program
     %type <classes> class_list
     %type <class_> class
+    %type <features> features_list
+    %type <features> features
+    %type <feature> feature
+    %type <formals> formals
+    %type <formal>  formal
+    %type <cases>   case_branch_list
+    %type <case_>  case_branch
+    %type <expressions> one_or_more_expr
+    %type <expressions> param_expr
+    %type <expression>  expr
+    %type <expression>  let_expr
+    
     
     /* You will want to change the following line. */
-    %type <features> dummy_feature_list
+    /*%type <features> dummy_feature_list */
     
     /* Precedence declarations go here. */
+    
+    %right      ASSIGN
+    %left       NOT
+    %left       '+' '-'
+    %left       '*' '/'
+    %left       ISVOID
+    %left       '~'
+    %left       '@'
+    %nonassoc   LE '<' '='
+    %left       '.'
+
     
     
     %%
@@ -157,18 +180,131 @@
     ;
     
     /* If no parent is specified, the class inherits from the Object class. */
-    class	: CLASS TYPEID '{' dummy_feature_list '}' ';'
+    class	: CLASS TYPEID '{' features_list '}' ';'
     { $$ = class_($2,idtable.add_string("Object"),$4,
     stringtable.add_string(curr_filename)); }
-    | CLASS TYPEID INHERITS TYPEID '{' dummy_feature_list '}' ';'
+    | CLASS TYPEID INHERITS TYPEID '{' features_list '}' ';'
     { $$ = class_($2,$4,$6,stringtable.add_string(curr_filename)); }
-    ;
+    | error ';'
+    {yyclearin ; $$=NULL;}
+
     
+    
+	/*the below code is modified by hale in 12.1 */
+
     /* Feature list may be empty, but no empty features in list. */
-    dummy_feature_list:		/* empty */
-    {  $$ = nil_Features(); }
+  features_list : features
+  {$$=$1;}
+  | 
+  {$$ = nil_Features();}
+  ;
+  
+  features  : feature ';' 
+  {$$ = single_Features($1);}
+  | features feature ';'
+  {$$ = append_Features($1,single_Features($2));}
+  | error ';'
+  {yyclearin ; $$=NULL;}
+  
+  feature : OBJECTID '(' formals ')' ':' TYPEID '{' expr '}' 
+  {$$=method($1,$3,$6,$8);}
+  | OBJECTID ':' TYPEID 
+  {$$=attr($1,$3,no_expr());}
+  | OBJECTID ':' TYPEID ASSIGN expr
+  {$$ = attr($1,$3,$5);}
+
+   
+	formals     : formal { $$ = single_Formals($1); }
+                | formals ',' formal { $$ = append_Formals($1, single_Formals($3)); }
+                /* empty argument list allowed */
+                | { $$ = nil_Formals(); }
+                ;
+    formal      : OBJECTID ':' TYPEID { $$ = formal($1, $3); }
+                ;
+   
+    /* expressions are the body of the program */
+    expr        : OBJECTID ASSIGN expr { $$ = assign($1, $3); }
+
+                /* dispatch: normal, static, omitted self */
+                | expr '.' OBJECTID '(' param_expr ')' { $$ = dispatch($1, $3, $5); }
+                | expr '@' TYPEID '.' OBJECTID '(' param_expr ')' { $$ = static_dispatch($1, $3, $5, $7); }
+                | OBJECTID '(' param_expr ')' { $$ = dispatch(object(idtable.add_string("self")), $1, $3); }
+
+                /* control structures */
+                | IF expr THEN expr ELSE expr FI { $$ = cond($2, $4, $6); }
+                | WHILE expr LOOP expr POOL { $$ = loop($2, $4); }
+
+                /* block of expression(s) */
+                | '{' one_or_more_expr '}' { $$ = block($2); }
+
+                /* nested lets */
+                | LET let_expr { $$ = $2; }
+
+                /* Use `case_branch_list` nonterminal to handle one or more cases 
+                 * See Cool Tour for more information on constructors
+                 */
+                | CASE expr OF case_branch_list ESAC { $$ = typcase($2, $4); }
+
+                /* prefix keywords */
+                | NEW TYPEID { $$ = new_($2); }
+                | ISVOID expr { $$ = isvoid($2); }
+
+                /* operators  */
+                | expr '+' expr { $$ = plus($1, $3); }
+                | expr '-' expr { $$ = sub($1, $3); }
+                | expr '*' expr { $$ = mul($1, $3); }
+                | expr '/' expr { $$ = divide($1, $3); }
+                | '~' expr { $$ = neg($2); }
+                | expr '<' expr { $$ = lt($1, $3); }
+                | expr LE expr { $$ = leq($1, $3); }
+                | expr '=' expr { $$ = eq($1, $3); }
+                | NOT expr { $$ = comp($2); }
+                
+                /* parentheses */
+                | '(' expr ')' { $$ = $2; }
+
+                /* names */
+                | OBJECTID { $$ = object($1); }
+
+                /* literals - strings, numbers, booleans */
+                | INT_CONST { $$ = int_const($1); }
+                | STR_CONST { $$ = string_const($1); }
+                | BOOL_CONST { $$ = bool_const($1); }
+                ;
+
+    let_expr    : OBJECTID ':' TYPEID IN expr { $$ = let($1, $3, no_expr(), $5); }
+                | OBJECTID ':' TYPEID ASSIGN expr IN expr { $$ = let($1, $3, $5, $7); }
+                | OBJECTID ':' TYPEID ',' let_expr { $$ = let($1, $3, no_expr(), $5); }
+                | OBJECTID ':' TYPEID ASSIGN expr ',' let_expr { $$ = let($1, $3, $5, $7); }
+                | error IN expr { yyclearin; $$ = NULL; }
+                | error ',' let_expr { yyclearin; $$ = NULL; }
+                ;
     
-    
+    /* one or more expressions, separated by a semicolon
+     * this is not the same as comma-separated expressions (e.g. a list of arguments)
+     */
+    one_or_more_expr    : expr ';' { $$ = single_Expressions($1); }
+                        | one_or_more_expr expr ';' { $$ = append_Expressions($1, single_Expressions($2)); }
+                        /* recover from an expression inside a block */
+                        | error ';' { yyclearin; $$ = NULL; }
+                        ;
+
+    param_expr          : expr { $$ = single_Expressions($1); }
+                        | param_expr ',' expr { $$ = append_Expressions($1, single_Expressions($3)); }
+                        /* include nil because params are optional */
+                        | { $$ = nil_Expressions(); }
+                        ;
+
+    /* must have at least one case_branch */
+    case_branch_list    : case_branch { $$ = single_Cases($1); }
+                        /* "The function `append_Phylums` appends two lists of phylums */
+                        | case_branch_list case_branch { $$ = append_Cases($1, single_Cases($2)); }
+                        ;
+    case_branch         : OBJECTID ':' TYPEID DARROW expr ';' { $$ = branch($1, $3, $5); }
+                        ;
+   
+     
+
     /* end of grammar */
     %%
     
